@@ -1,0 +1,133 @@
+{
+  "dataset_rows": 9106,
+  "training_rows": 7284,
+  "test_rows": 1822,
+  "accuracy": 0.7574,
+  "macro_f1": 0.2342,
+  "classification_report": {
+    "Fatal": {
+      "precision": 0.7637883008356546,
+      "recall": 0.9877521613832853,
+      "f1-score": 0.8614514608859567,
+      "support": 1388.0
+    },
+    "Minor": {
+      "precision": 0.4,
+      "recall": 0.012738853503184714,
+      "f1-score": 0.024691358024691357,
+      "support": 157.0
+    },
+    "Property Damage Only": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 23.0
+    },
+    "Serious": {
+      "precision": 0.3181818181818182,
+      "recall": 0.027559055118110236,
+      "f1-score": 0.050724637681159424,
+      "support": 254.0
+    },
+    "accuracy": 0.7574094401756312,
+    "macro avg": {
+      "precision": 0.3704925297543682,
+      "recall": 0.25701251750114507,
+      "f1-score": 0.23421686414795187,
+      "support": 1822.0
+    },
+    "weighted avg": {
+      "precision": 0.6606785638738037,
+      "recall": 0.7574094401756312,
+      "f1-score": 0.6654529247478589,
+      "support": 1822.0
+    }
+  },
+  "confusion_matrix": [
+    [
+      1371,
+      3,
+      0,
+      14
+    ],
+    [
+      154,
+      2,
+      0,
+      1
+    ],
+    [
+      23,
+      0,
+      0,
+      0
+    ],
+    [
+      247,
+      0,
+      0,
+      7
+    ]
+  ],
+  "target_classes": [
+    "Fatal",
+    "Minor",
+    "Property Damage Only",
+    "Serious"
+  ],
+  "feature_importance": [
+    {
+      "feature": "city",
+      "importance": 0.221
+    },
+    {
+      "feature": "speed",
+      "importance": 0.1248
+    },
+    {
+      "feature": "vehicle",
+      "importance": 0.1148
+    },
+    {
+      "feature": "cause",
+      "importance": 0.0958
+    },
+    {
+      "feature": "month",
+      "importance": 0.0885
+    },
+    {
+      "feature": "hour",
+      "importance": 0.0881
+    },
+    {
+      "feature": "weather",
+      "importance": 0.0874
+    },
+    {
+      "feature": "road",
+      "importance": 0.0821
+    },
+    {
+      "feature": "light",
+      "importance": 0.0529
+    },
+    {
+      "feature": "vehicles",
+      "importance": 0.0445
+    }
+  ],
+  "feature_columns": [
+    "hour",
+    "month",
+    "speed_kmh",
+    "vehicles_involved",
+    "road_type",
+    "weather_condition",
+    "light_condition",
+    "cause",
+    "vehicle_type",
+    "city"
+  ],
+  "source": "Real Indian Road Accident Records (MoRTH / City Police Data)"
+}

@@ -1,0 +1,12 @@
+[
+  "hour",
+  "month",
+  "speed_kmh",
+  "vehicles_involved",
+  "road_type",
+  "weather_condition",
+  "light_condition",
+  "cause",
+  "vehicle_type",
+  "city"
+]
