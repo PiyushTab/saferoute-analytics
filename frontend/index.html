@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SafeRoute Analytics — Road Accident Hotspot Detection</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ─── SIDEBAR ─────────────────────────────────────────────────────────── -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-logo">
+    <span class="logo-icon">🛡️</span>
+    <div class="logo-text">
+      <span class="logo-title">SafeRoute</span>
+      <span class="logo-sub">Analytics</span>
+    </div>
+  </div>
+
+  <nav class="nav">
+    <a href="#" class="nav-item active" data-page="dashboard">
+      <span class="nav-icon">📊</span><span>Dashboard</span>
+    </a>
+    <a href="#" class="nav-item" data-page="map">
+      <span class="nav-icon">🗺️</span><span>Hotspot Map</span>
+    </a>
+    <a href="#" class="nav-item" data-page="charts">
+      <span class="nav-icon">📈</span><span>Visualizations</span>
+    </a>
+    <a href="#" class="nav-item" data-page="analysis">
+      <span class="nav-icon">🔍</span><span>Risk Analysis</span>
+    </a>
+    <a href="#" class="nav-item" data-page="ml">
+      <span class="nav-icon">🤖</span><span>ML Predictor</span>
+    </a>
+    <a href="#" class="nav-item" data-page="comparison">
+      <span class="nav-icon">⚖️</span><span>Tool Comparison</span>
+    </a>
+  </nav>
+
+  <div class="sidebar-footer">
+    <span class="status-dot"></span>
+    <span class="status-text">Live Data</span>
+  </div>
+</aside>
+
+<!-- ─── MAIN ─────────────────────────────────────────────────────────────── -->
+<main class="main" id="main">
+
+  <!-- Top Bar -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <button class="menu-btn" id="menuBtn">☰</button>
+      <div class="breadcrumb" id="breadcrumb">Dashboard</div>
+    </div>
+    <div class="topbar-right">
+      <div class="filter-bar" id="globalFilters">
+        <select id="filterCity" class="filter-select">
+          <option value="all">All Cities</option>
+        </select>
+        <select id="filterYear" class="filter-select">
+          <option value="all">All Years</option>
+        </select>
+        <select id="filterSeverity" class="filter-select">
+          <option value="all">All Severities</option>
+        </select>
+        <button class="btn-primary" id="applyFilters">Apply</button>
+      </div>
+      <div class="topbar-time" id="currentTime"></div>
+    </div>
+  </header>
+
+  <!-- ─── PAGES ──────────────────────────────────────────────────────────── -->
+
+  <!-- DASHBOARD PAGE -->
+  <section class="page active" id="page-dashboard">
+    <div class="page-header">
+      <h1>Road Accident Analytics Dashboard</h1>
+      <p class="page-sub">Historical accident data analysis · Hotspot detection · Severity classification</p>
+    </div>
+
+    <!-- KPI Cards -->
+    <div class="kpi-grid" id="kpiGrid">
+      <div class="kpi-card kpi-total"><div class="kpi-icon">🚨</div><div class="kpi-body"><div class="kpi-value" id="k-total">–</div><div class="kpi-label">Total Accidents</div></div></div>
+      <div class="kpi-card kpi-fatal"><div class="kpi-icon">💀</div><div class="kpi-body"><div class="kpi-value" id="k-fatal">–</div><div class="kpi-label">Fatal Accidents</div><div class="kpi-badge" id="k-fatal-pct">–%</div></div></div>
+      <div class="kpi-card kpi-serious"><div class="kpi-icon">🏥</div><div class="kpi-body"><div class="kpi-value" id="k-serious">–</div><div class="kpi-label">Serious Injuries</div><div class="kpi-badge" id="k-serious-pct">–%</div></div></div>
+      <div class="kpi-card kpi-fatalities"><div class="kpi-icon">⚰️</div><div class="kpi-body"><div class="kpi-value" id="k-fatalities">–</div><div class="kpi-label">Total Fatalities</div></div></div>
+      <div class="kpi-card kpi-injuries"><div class="kpi-icon">🩹</div><div class="kpi-body"><div class="kpi-value" id="k-injuries">–</div><div class="kpi-label">Total Injuries</div></div></div>
+      <div class="kpi-card kpi-speed"><div class="kpi-icon">⚡</div><div class="kpi-body"><div class="kpi-value" id="k-speed">–</div><div class="kpi-label">Avg Speed (km/h)</div></div></div>
+      <div class="kpi-card kpi-peak"><div class="kpi-icon">🕐</div><div class="kpi-body"><div class="kpi-value" id="k-peak">–</div><div class="kpi-label">Peak Hour</div></div></div>
+      <div class="kpi-card kpi-city"><div class="kpi-icon">🏙️</div><div class="kpi-body"><div class="kpi-value" id="k-city">–</div><div class="kpi-label">Highest Risk City</div></div></div>
+    </div>
+
+    <!-- Charts Row 1 -->
+    <div class="chart-row">
+      <div class="chart-card w-60">
+        <div class="chart-header">
+          <h3>Monthly Accident Trends</h3>
+          <span class="chart-tag plotly-tag">Plotly</span>
+        </div>
+        <div id="chart-trend" class="chart-area"></div>
+      </div>
+      <div class="chart-card w-40">
+        <div class="chart-header">
+          <h3>Severity Distribution</h3>
+          <span class="chart-tag plotly-tag">Plotly</span>
+        </div>
+        <div id="chart-severity-donut" class="chart-area"></div>
+      </div>
+    </div>
+
+    <!-- Charts Row 2 -->
+    <div class="chart-row">
+      <div class="chart-card w-50">
+        <div class="chart-header">
+          <h3>Accidents by City & Severity</h3>
+          <span class="chart-tag plotly-tag">Plotly</span>
+        </div>
+        <div id="chart-city-bar" class="chart-area"></div>
+      </div>
+      <div class="chart-card w-50">
+        <div class="chart-header">
+          <h3>Accidents by Hour</h3>
+          <span class="chart-tag chartjs-tag">Chart.js</span>
+        </div>
+        <div class="chart-area"><canvas id="chart-hourly"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Insights -->
+    <div class="insights-row" id="insightsRow"></div>
+  </section>
+
+  <!-- MAP PAGE -->
+  <section class="page" id="page-map">
+    <div class="page-header">
+      <h1>Accident Hotspot Map</h1>
+      <p class="page-sub">Interactive heatmap · Cluster analysis · Location-based risk scoring</p>
+    </div>
+    <div class="map-controls">
+      <div class="map-toggle-group">
+        <button class="map-btn active" id="btnHeatmap">🔥 Heatmap</button>
+        <button class="map-btn" id="btnClusters">🔴 Clusters</button>
+        <button class="map-btn" id="btnPoints">📍 Points</button>
+      </div>
+      <div class="map-legend">
+        <span class="legend-item"><span class="dot dot-fatal"></span>Fatal</span>
+        <span class="legend-item"><span class="dot dot-serious"></span>Serious</span>
+        <span class="legend-item"><span class="dot dot-minor"></span>Minor</span>
+        <span class="legend-item"><span class="dot dot-pdo"></span>PDO</span>
+      </div>
+      <div class="map-stat" id="mapStat">Loading…</div>
+    </div>
+    <div id="accidentMap" class="map-container"></div>
+    <div class="hotspot-table-card">
+      <h3>Top Risk Hotspots</h3>
+      <table class="hotspot-table" id="hotspotTable">
+        <thead><tr><th>Rank</th><th>City</th><th>Accidents</th><th>Fatalities</th><th>Injuries</th><th>Risk Score</th><th>Avg Speed</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- VISUALIZATIONS PAGE -->
+  <section class="page" id="page-charts">
+    <div class="page-header">
+      <h1>Statistical Visualizations</h1>
+      <p class="page-sub">Histograms · Box plots · Bar charts · Pie & Donut charts · Seaborn · Matplotlib · Plotly</p>
+    </div>
+
+    <div class="viz-tabs">
+      <button class="viz-tab active" data-tab="histograms">📊 Histograms</button>
+      <button class="viz-tab" data-tab="boxplots">📦 Box Plots</button>
+      <button class="viz-tab" data-tab="barcharts">📈 Bar Charts</button>
+      <button class="viz-tab" data-tab="piecharts">🍩 Pie & Donut</button>
+      <button class="viz-tab" data-tab="advanced">🔬 Advanced</button>
+    </div>
+
+    <!-- Histograms -->
+    <div class="viz-panel active" id="tab-histograms">
+      <div class="viz-info-banner">
+        <strong>📊 Histograms</strong> — Built with <span class="tag-seaborn">Seaborn</span> + <span class="tag-matplotlib">Matplotlib</span>. Histograms reveal the distribution shape, central tendency, and spread of continuous variables like speed and casualty counts.
+      </div>
+      <div class="chart-row">
+        <div class="chart-card full-w">
+          <div class="chart-header"><h3>Speed Distribution at Accident Sites</h3><span class="chart-tag seaborn-tag">Seaborn + Matplotlib</span></div>
+          <div class="chart-area large"><div id="hist-speed-plotly" style="width:100%;height:100%"></div></div>
+        </div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-card full-w">
+          <div class="chart-header"><h3>Hourly Accident Count & Injury Distribution</h3><span class="chart-tag matplotlib-tag">Matplotlib</span></div>
+          <div class="chart-area large"><div id="hist-hour-plotly" style="width:100%;height:100%"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Box Plots -->
+    <div class="viz-panel" id="tab-boxplots">
+      <div class="viz-info-banner">
+        <strong>📦 Box & Whisker Plots</strong> — Built with <span class="tag-seaborn">Seaborn</span> + <span class="tag-matplotlib">Matplotlib</span>. Box plots display median, quartiles, and outliers — revealing how speed and injury counts vary across severity levels and road types.
+      </div>
+      <div class="chart-row">
+        <div class="chart-card full-w">
+          <div class="chart-header"><h3>Speed & Injuries by Severity Level</h3><span class="chart-tag seaborn-tag">Seaborn</span></div>
+          <div class="chart-area large"><div id="box-severity-plotly" style="width:100%;height:100%"></div></div>
+        </div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-card full-w">
+          <div class="chart-header"><h3>Speed Distribution by Road Type & City Injuries</h3><span class="chart-tag seaborn-tag">Seaborn</span></div>
+          <div class="chart-area large"><div id="box-road-plotly" style="width:100%;height:100%"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bar Charts -->
+    <div class="viz-panel" id="tab-barcharts">
+      <div class="viz-info-banner">
+        <strong>📈 Bar Charts</strong> — <span class="tag-matplotlib">Matplotlib</span> for static publication-ready charts; <span class="tag-plotly">Plotly</span> for interactive grouped/stacked bars. Bar charts effectively compare categorical frequencies.
+      </div>
+      <div class="chart-row">
+        <div class="chart-card w-50">
+          <div class="chart-header"><h3>Top Accident Causes</h3><span class="chart-tag matplotlib-tag">Matplotlib</span></div>
+          <div class="chart-area large"><div id="bar-cause-plotly" style="width:100%;height:100%"></div></div>
+        </div>
+        <div class="chart-card w-50">
+          <div class="chart-header"><h3>Accidents by City & Severity</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+          <div id="bar-city-viz" class="chart-area large"></div>
+        </div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-card full-w">
+          <div class="chart-header"><h3>Monthly Accidents by Year</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+          <div id="bar-monthly-viz" class="chart-area"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pie & Donut -->
+    <div class="viz-panel" id="tab-piecharts">
+      <div class="viz-info-banner">
+        <strong>🍩 Pie & Donut Charts</strong> — <span class="tag-matplotlib">Matplotlib</span> for static pie/donut; <span class="tag-plotly">Plotly</span> for interactive donut charts. These show proportional breakdowns of categorical data.
+      </div>
+      <div class="chart-row">
+        <div class="chart-card w-50">
+          <div class="chart-header"><h3>Severity Distribution — Pie (Matplotlib)</h3><span class="chart-tag matplotlib-tag">Matplotlib</span></div>
+          <div class="chart-area large"><div id="pie-severity-plotly" style="width:100%;height:100%"></div></div>
+        </div>
+        <div class="chart-card w-50">
+          <div class="chart-header"><h3>Weather Conditions — Donut (Plotly)</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+          <div id="donut-weather-viz" class="chart-area large"></div>
+        </div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-card w-50">
+          <div class="chart-header"><h3>Road Type Breakdown — Donut (Plotly)</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+          <div id="donut-road-viz" class="chart-area large"></div>
+        </div>
+        <div class="chart-card w-50">
+          <div class="chart-header"><h3>Vehicle Type Distribution</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+          <div id="pie-vehicle-viz" class="chart-area large"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Advanced -->
+    <div class="viz-panel" id="tab-advanced">
+      <div class="viz-info-banner">
+        <strong>🔬 Advanced Charts</strong> — Heatmap (Seaborn), scatter plots (Plotly), and casualty analysis charts to uncover deeper patterns in the accident data.
+      </div>
+      <div class="chart-row">
+        <div class="chart-card full-w">
+          <div class="chart-header"><h3>Accident Heatmap: Hour × Day of Week</h3><span class="chart-tag seaborn-tag">Seaborn</span></div>
+          <div class="chart-area large"><div id="heatmap-plotly" style="width:100%;height:100%"></div></div>
+        </div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-card w-50">
+          <div class="chart-header"><h3>Speed vs Injuries Scatter</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+          <div id="scatter-viz" class="chart-area large"></div>
+        </div>
+        <div class="chart-card w-50">
+          <div class="chart-header"><h3>Casualties by Cause</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+          <div id="casualty-cause-viz" class="chart-area large"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- RISK ANALYSIS PAGE -->
+  <section class="page" id="page-analysis">
+    <div class="page-header">
+      <h1>Risk Analysis</h1>
+      <p class="page-sub">High-risk periods · Dangerous locations · Causal factor breakdown</p>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card w-60">
+        <div class="chart-header"><h3>Peak Risk Hours</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+        <div id="risk-hours-viz" class="chart-area"></div>
+      </div>
+      <div class="chart-card w-40">
+        <div class="chart-header"><h3>Day of Week Pattern</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+        <div id="risk-dow-viz" class="chart-area"></div>
+      </div>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card full-w">
+        <div class="chart-header"><h3>Monthly Accident & Fatality Trend</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+        <div id="risk-monthly-viz" class="chart-area"></div>
+      </div>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card w-50">
+        <div class="chart-header"><h3>Casualties by Road Type</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+        <div id="risk-road-viz" class="chart-area"></div>
+      </div>
+      <div class="chart-card w-50">
+        <div class="chart-header"><h3>Fatalities by Cause</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+        <div id="risk-cause-viz" class="chart-area"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ML PREDICTOR PAGE -->
+  <section class="page" id="page-ml">
+    <div class="page-header">
+      <h1>ML Severity Predictor</h1>
+      <p class="page-sub">Random Forest classifier · Predicts accident severity from road conditions</p>
+    </div>
+    <div class="ml-grid">
+      <div class="ml-form-card">
+        <h3>🔧 Input Parameters</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Hour of Day</label>
+            <input type="range" id="ml-hour" min="0" max="23" value="8" oninput="document.getElementById('ml-hour-val').textContent=this.value+':00'">
+            <span id="ml-hour-val" class="range-val">8:00</span>
+          </div>
+          <div class="form-group">
+            <label>Month</label>
+            <select id="ml-month">
+              <option value="1">January</option><option value="2">February</option>
+              <option value="3">March</option><option value="4">April</option>
+              <option value="5">May</option><option value="6">June</option>
+              <option value="7">July</option><option value="8">August</option>
+              <option value="9">September</option><option value="10">October</option>
+              <option value="11">November</option><option value="12">December</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Speed (km/h)</label>
+            <input type="range" id="ml-speed" min="10" max="180" value="60" oninput="document.getElementById('ml-speed-val').textContent=this.value+' km/h'">
+            <span id="ml-speed-val" class="range-val">60 km/h</span>
+          </div>
+          <div class="form-group">
+            <label>Vehicles Involved</label>
+            <input type="number" id="ml-vehicles" value="2" min="1" max="10" class="form-input">
+          </div>
+          <div class="form-group">
+            <label>Road Type</label>
+            <select id="ml-road"></select>
+          </div>
+          <div class="form-group">
+            <label>Weather</label>
+            <select id="ml-weather"></select>
+          </div>
+          <div class="form-group">
+            <label>Light Condition</label>
+            <select id="ml-light"></select>
+          </div>
+          <div class="form-group">
+            <label>Accident Type</label>
+            <select id="ml-cause"></select>
+          </div>
+          <div class="form-group">
+            <label>Day of Week</label>
+            <select id="ml-day">
+              <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+              <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>City</label>
+            <select id="ml-city"></select>
+          </div>
+        </div>
+        <button class="btn-predict" id="predictBtn">🤖 Predict Severity</button>
+      </div>
+
+      <div class="ml-result-card" id="mlResult">
+        <div class="result-placeholder">
+          <div class="placeholder-icon">🤖</div>
+          <p>Fill in the parameters and click <strong>Predict</strong> to get the severity classification from the Random Forest model.</p>
+          <div class="model-info">
+            <div class="info-pill">🌲 Random Forest</div>
+            <div class="info-pill">📊 150 Trees</div>
+            <div class="info-pill">⚡ Real-time</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature Importance -->
+    <div class="chart-card mt-4">
+      <div class="chart-header"><h3>Feature Importance (Model Insights)</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+      <div id="feature-importance-viz" class="chart-area"></div>
+    </div>
+
+    <!-- Confusion Matrix / Metrics -->
+    <div class="chart-row mt-4">
+      <div class="chart-card w-50">
+        <div class="chart-header"><h3>Model Performance Metrics</h3></div>
+        <div id="ml-metrics-panel" class="metrics-panel"></div>
+      </div>
+      <div class="chart-card w-50">
+        <div class="chart-header"><h3>Confusion Matrix</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+        <div id="confusion-matrix-viz" class="chart-area"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TOOL COMPARISON PAGE -->
+  <section class="page" id="page-comparison">
+    <div class="page-header">
+      <h1>Visualization Tool Comparison</h1>
+      <p class="page-sub">Seaborn vs Matplotlib vs Plotly vs Excel — Usability · Flexibility · Visual Appeal</p>
+    </div>
+
+    <!-- Radar Chart -->
+    <div class="chart-row">
+      <div class="chart-card w-60">
+        <div class="chart-header"><h3>Tool Comparison Radar Chart</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+        <div id="radar-viz" class="chart-area"></div>
+      </div>
+      <div class="chart-card w-40">
+        <div class="chart-header"><h3>Overall Scores</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+        <div id="tool-score-viz" class="chart-area"></div>
+      </div>
+    </div>
+
+    <!-- Tool Cards -->
+    <div class="tool-cards" id="toolCards"></div>
+
+    <!-- Comparison Table -->
+    <div class="chart-card mt-4">
+      <div class="chart-header"><h3>Detailed Feature Comparison</h3></div>
+      <table class="comparison-table">
+        <thead>
+          <tr><th>Feature</th><th>🐍 Seaborn</th><th>📊 Matplotlib</th><th>📉 Plotly</th><th>📋 Excel</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Interactivity</td><td class="c-bad">Static</td><td class="c-bad">Static</td><td class="c-good">Interactive</td><td class="c-mid">Limited</td></tr>
+          <tr><td>Statistical Plots</td><td class="c-good">Excellent</td><td class="c-mid">Good</td><td class="c-mid">Good</td><td class="c-bad">Limited</td></tr>
+          <tr><td>Customization</td><td class="c-mid">Moderate</td><td class="c-good">Full Control</td><td class="c-good">High</td><td class="c-bad">Low</td></tr>
+          <tr><td>Code Required</td><td class="c-mid">Python</td><td class="c-mid">Python</td><td class="c-mid">Python/JS</td><td class="c-good">No</td></tr>
+          <tr><td>Web Integration</td><td class="c-bad">Export only</td><td class="c-bad">Export only</td><td class="c-good">Native</td><td class="c-bad">No</td></tr>
+          <tr><td>3D Support</td><td class="c-bad">No</td><td class="c-mid">Limited</td><td class="c-good">Yes</td><td class="c-bad">No</td></tr>
+          <tr><td>Best For</td><td>Statistical EDA</td><td>Publication</td><td>Dashboards</td><td>Reports</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Chart Type Showcase -->
+    <div class="showcase-grid" id="chartShowcase">
+      <div class="chart-card">
+        <div class="chart-header"><h3>Histogram — Seaborn Style</h3><span class="chart-tag seaborn-tag">Seaborn</span></div>
+        <div id="showcase-hist" class="chart-area"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header"><h3>Box Plot — Matplotlib Style</h3><span class="chart-tag matplotlib-tag">Matplotlib</span></div>
+        <div id="showcase-box" class="chart-area"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header"><h3>Bar Chart — Plotly Interactive</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+        <div id="showcase-bar" class="chart-area"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header"><h3>Donut Chart — Plotly Style</h3><span class="chart-tag plotly-tag">Plotly</span></div>
+        <div id="showcase-donut" class="chart-area"></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <p>Loading SafeRoute Analytics…</p>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
