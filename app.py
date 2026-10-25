@@ -1,435 +1,434 @@
 """
-SafeRoute Analytics - Flask Backend API
+SafeRoute Analytics - Flask backend.
+
+Serves the single-page dashboard from ./frontend and a small JSON API.
+Every data endpoint accepts the optional filters ?city=, ?year=, ?severity=.
 """
 
-from flask import Flask, jsonify as flask_jsonify, request, send_from_directory
-from flask_cors import CORS
-import pandas as pd
-import numpy as np
 import json
 import os
-import traceback
+import threading
 from functools import lru_cache
 
+import numpy as np
+import pandas as pd
+from flask import Flask, Response, abort, jsonify as flask_jsonify, request, send_from_directory
+from flask_cors import CORS
+
+import visualizations
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-app = Flask(__name__, static_folder=os.path.join(BASE_DIR, "frontend"), static_url_path='')
+DATA_PATH = os.path.join(BASE_DIR, "data", "accidents.csv")
+MODELS_PATH = os.path.join(BASE_DIR, "models")
+
+app = Flask(__name__, static_folder=os.path.join(BASE_DIR, "frontend"), static_url_path="")
 CORS(app)
 
+DAY_ORDER = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+MONTH_ORDER = ["January", "February", "March", "April", "May", "June", "July",
+               "August", "September", "October", "November", "December"]
+SEVERITY_ORDER = ["Property Damage Only", "Minor", "Serious", "Fatal"]
+REQUIRED_COLUMNS = {
+    "accident_id", "date", "year", "month", "month_name", "day_of_week", "hour",
+    "latitude", "longitude", "city", "state", "road_type", "weather_condition",
+    "light_condition", "cause", "vehicle_type", "speed_kmh", "fatalities", "injuries",
+    "vehicles_involved", "severity", "severity_score",
+}
+
+
+# ─── JSON helpers ─────────────────────────────────────────────────────────────
 
 def _json_safe(value):
-    """Convert NaN/Infinity and NumPy/Pandas scalars to strict JSON-safe values."""
+    """Convert NumPy/Pandas scalars and NaN/inf into strict-JSON values."""
     if isinstance(value, dict):
         return {str(k): _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
-    if value is None or value is pd.NA or value is pd.NaT:
-        return None
     if isinstance(value, (np.integer,)):
         return int(value)
     if isinstance(value, (np.floating, float)):
         return float(value) if np.isfinite(value) else None
     if isinstance(value, (np.bool_,)):
         return bool(value)
-    # Handle pandas timestamps and other scalar missing values.
-    try:
-        if pd.isna(value):
-            return None
-    except (TypeError, ValueError):
-        pass
-    if hasattr(value, 'item'):
-        try:
-            return _json_safe(value.item())
-        except (ValueError, TypeError):
-            pass
+    if value is None or value is pd.NA or value is pd.NaT:
+        return None
     return value
 
 
-def jsonify(value):
-    """Drop non-standard NaN tokens from every API response."""
-    return flask_jsonify(_json_safe(value))
-
-DATA_PATH = os.path.join(BASE_DIR, "data", "accidents.csv")
-MODELS_PATH = os.path.join(BASE_DIR, "models")
+def jsonify(value, status=200):
+    response = flask_jsonify(_json_safe(value))
+    response.status_code = status
+    return response
 
 
-# ─── Data Loading ─────────────────────────────────────────────────────────────
+def records(frame):
+    return frame.to_dict(orient="records")
+
+
+# ─── Data ─────────────────────────────────────────────────────────────────────
+
+_df = None
+_df_lock = threading.Lock()
+
 
 def load_data():
-    required_columns = {"accident_id", "date", "year", "hour", "latitude", "longitude",
-                        "city", "state", "road_type", "weather_condition", "light_condition",
-                        "cause", "vehicle_type", "speed_kmh", "fatalities", "injuries", "severity"}
     if not os.path.exists(DATA_PATH):
         from data_loader_india import prepare_indian_dataset
         prepare_indian_dataset()
-
     df = pd.read_csv(DATA_PATH)
-    if required_columns.issubset(df.columns) and not df.empty:
-        return df
-    raise ValueError("data/accidents.csv does not match the expected real Indian dataset schema.")
+    missing = REQUIRED_COLUMNS - set(df.columns)
+    if missing:
+        raise ValueError("data/accidents.csv is missing columns: " + ", ".join(sorted(missing)))
+    if df.empty:
+        raise ValueError("data/accidents.csv is empty.")
+    return df
 
-
-
-_df_cache = None
 
 def get_df():
-    global _df_cache
-    if _df_cache is None:
-        _df_cache = load_data()
-    return _df_cache
+    global _df
+    if _df is None:
+        with _df_lock:
+            if _df is None:
+                _df = load_data()
+    return _df
 
 
-# ─── Root Route ───────────────────────────────────────────────────────────────
+def filter_args():
+    """Read ?city=&year=&severity= as a hashable tuple (so results can be cached)."""
+    return (
+        request.args.get("city", "all"),
+        request.args.get("year", "all"),
+        request.args.get("severity", "all"),
+    )
 
-@app.route('/')
+
+def apply_filters(df, city="all", year="all", severity="all"):
+    if city != "all":
+        df = df[df["city"] == city]
+    if year != "all":
+        try:
+            df = df[df["year"] == int(year)]
+        except ValueError:
+            df = df.iloc[0:0]
+    if severity != "all":
+        df = df[df["severity"] == severity]
+    return df
+
+
+def current_df():
+    return apply_filters(get_df(), *filter_args())
+
+
+def ordered(series, order):
+    """Counts of `series` as a list of {label, count} following a fixed order."""
+    counts = series.value_counts()
+    return [{"label": k, "count": int(counts.get(k, 0))} for k in order]
+
+
+# ─── Pages ────────────────────────────────────────────────────────────────────
+
+@app.route("/")
 def index():
-    return send_from_directory(os.path.join(BASE_DIR, 'frontend'), 'index.html')
+    return send_from_directory(app.static_folder, "index.html")
 
 
-# ─── KPIs ─────────────────────────────────────────────────────────────────────
+API_VERSION = 2
 
-@app.route('/api/kpis')
+
+@app.route("/api/health")
+def health():
+    df = get_df()
+    return jsonify({
+        "status": "ok",
+        "api_version": API_VERSION,
+        "records": len(df),
+        "fatalities": int(df["fatalities"].sum()),
+        "injuries": int(df["injuries"].sum()),
+    })
+
+
+# ─── Filters and KPIs ─────────────────────────────────────────────────────────
+
+@app.route("/api/filters")
+def filters():
+    df = get_df()
+    return jsonify({
+        "cities": sorted(df["city"].dropna().unique().tolist(), key=str.casefold),
+        "years": sorted(int(y) for y in df["year"].unique()),
+        "severities": [s for s in reversed(SEVERITY_ORDER) if s in set(df["severity"])],
+        "road_types": sorted(df["road_type"].unique().tolist()),
+        "weather": sorted(df["weather_condition"].unique().tolist()),
+        "light_conditions": sorted(df["light_condition"].unique().tolist()),
+        "causes": sorted(df["cause"].unique().tolist()),
+        "vehicle_types": sorted(df["vehicle_type"].unique().tolist()),
+        "total_records": len(df),
+    })
+
+
+@app.route("/api/kpis")
 def kpis():
-    df = get_df()
+    df = current_df()
     total = len(df)
-    fatal_count = len(df[df['severity'] == 'Fatal'])
-    serious_count = len(df[df['severity'] == 'Serious'])
-    total_fatalities = int(df['fatalities'].sum())
-    total_injuries = int(df['injuries'].sum())
-    avg_speed = round(float(df['speed_kmh'].mean()), 1) if df['speed_kmh'].notna().any() else None
-    hotspot_count = df.groupby(['city']).size().count()
-
-    peak_hour = int(df.groupby('hour').size().idxmax())
-    worst_city = df.groupby('city')['fatalities'].sum().idxmax()
-    top_cause = df['cause'].value_counts().index[0]
-
+    if total == 0:
+        return jsonify({"total_accidents": 0, "empty": True})
+    fatal = int((df["severity"] == "Fatal").sum())
     return jsonify({
-        'total_accidents': total,
-        'fatal_count': fatal_count,
-        'serious_count': serious_count,
-        'total_fatalities': total_fatalities,
-        'total_injuries': total_injuries,
-        'avg_speed': avg_speed,
-        'hotspot_cities': int(hotspot_count),
-        'peak_hour': peak_hour,
-        'worst_city': worst_city,
-        'top_cause': top_cause,
-        'fatal_pct': round(fatal_count / total * 100, 1),
-        'serious_pct': round(serious_count / total * 100, 1),
+        "total_accidents": total,
+        "fatal_count": fatal,
+        "fatal_pct": round(fatal / total * 100, 1),
+        "total_fatalities": int(df["fatalities"].sum()),
+        "total_injuries": int(df["injuries"].sum()),
+        "cities": int(df["city"].nunique()),
+        "peak_hour": int(df.groupby("hour").size().idxmax()),
+        "top_city": df.groupby("city")["fatalities"].sum().idxmax(),
+        "top_cause": df["cause"].value_counts().index[0],
     })
 
 
-# ─── Map Data ─────────────────────────────────────────────────────────────────
+# ─── Map ──────────────────────────────────────────────────────────────────────
 
-@app.route('/api/map-data')
+@app.route("/api/map-data")
 def map_data():
-    df = get_df()
-    severity_filter = request.args.get('severity', 'all')
-    city_filter = request.args.get('city', 'all')
-    year_filter = request.args.get('year', 'all')
+    df = current_df()
+    sample = df.sample(min(2000, len(df)), random_state=42) if len(df) > 2000 else df
+    points = sample[[
+        "accident_id", "latitude", "longitude", "severity", "city", "date", "hour",
+        "cause", "road_type", "weather_condition", "fatalities", "injuries",
+    ]]
 
-    filtered = df.copy()
-    if severity_filter != 'all':
-        filtered = filtered[filtered['severity'] == severity_filter]
-    if city_filter != 'all':
-        filtered = filtered[filtered['city'] == city_filter]
-    if year_filter != 'all':
-        filtered = filtered[filtered['year'] == int(year_filter)]
-
-    # Sample for performance
-    sample = filtered.sample(min(1500, len(filtered)), random_state=42) if len(filtered) > 1500 else filtered
-
-    records = sample[[
-        'accident_id', 'latitude', 'longitude', 'severity', 'city',
-        'date', 'hour', 'cause', 'road_type', 'speed_kmh',
-        'fatalities', 'injuries', 'weather_condition'
-    ]].to_dict(orient='records')
-
-    # Hotspot clusters (grid-based)
-    filtered['lat_round'] = filtered['latitude'].round(2)
-    filtered['lon_round'] = filtered['longitude'].round(2)
-    clusters = (filtered.groupby(['lat_round', 'lon_round'])
-                .agg(count=('accident_id', 'count'),
-                     avg_severity_score=('severity_score', 'mean'),
-                     fatal=('fatalities', 'sum'),
-                     city=('city', 'first'))
-                .reset_index()
-                .rename(columns={'lat_round': 'lat', 'lon_round': 'lon'}))
-    clusters['grid_area'] = clusters.apply(lambda r: f"Grid {r['lon']:.2f}, {r['lat']:.2f}", axis=1)
-    clusters = clusters[clusters['count'] >= 2].sort_values('count', ascending=False).head(100)
+    grid = df.assign(lat=df["latitude"].round(1), lon=df["longitude"].round(1))
+    clusters = (grid.groupby(["lat", "lon"])
+                .agg(count=("accident_id", "count"),
+                     fatalities=("fatalities", "sum"),
+                     injuries=("injuries", "sum"),
+                     risk=("severity_score", "mean"),
+                     city=("city", lambda s: s.mode().iat[0]))
+                .reset_index())
+    clusters = clusters[clusters["count"] >= 3].sort_values("count", ascending=False).head(80)
 
     return jsonify({
-        'points': records,
-        'clusters': clusters.to_dict(orient='records'),
-        'total_filtered': len(filtered)
+        "points": records(points),
+        "clusters": records(clusters),
+        "total": len(df),
     })
+
+
+@app.route("/api/analytics/hotspots")
+def hotspots():
+    df = current_df()
+    if df.empty:
+        return jsonify([])
+    stats = df.groupby("city").agg(
+        total=("accident_id", "count"),
+        fatalities=("fatalities", "sum"),
+        injuries=("injuries", "sum"),
+    ).reset_index()
+    stats["risk_score"] = (stats["fatalities"] * 10 + stats["injuries"] * 2 + stats["total"] * 0.5).round(0)
+    return jsonify(records(stats.sort_values("risk_score", ascending=False).head(10)))
 
 
 # ─── Charts ───────────────────────────────────────────────────────────────────
 
-@app.route('/api/charts/summary')
+@app.route("/api/charts/summary")
 def charts_summary():
-    df = get_df()
+    df = current_df()
     return jsonify({
-        'severity': df['severity'].value_counts().to_dict(),
-        'causes': df['cause'].value_counts().head(10).to_dict(),
-        'road_types': df['road_type'].value_counts().to_dict(),
-        'weather': df['weather_condition'].value_counts().to_dict(),
-        'cities': df['city'].value_counts().to_dict(),
-        'light': df['light_condition'].value_counts().to_dict(),
-        'vehicles': df['vehicle_type'].value_counts().to_dict(),
-        'years': sorted(df['year'].unique().tolist()),
+        "severity": ordered(df["severity"], SEVERITY_ORDER),
+        "weather": records(df["weather_condition"].value_counts().rename_axis("label").reset_index(name="count")),
+        "road_types": records(df["road_type"].value_counts().rename_axis("label").reset_index(name="count")),
+        "vehicles": records(df["vehicle_type"].value_counts().rename_axis("label").reset_index(name="count")),
+        "causes": records(df["cause"].value_counts().rename_axis("label").reset_index(name="count")),
     })
 
 
-@app.route('/api/charts/temporal')
+@app.route("/api/charts/temporal")
 def charts_temporal():
-    df = get_df()
-    hourly = df.groupby('hour').size().reset_index(name='count')
-    monthly = df.groupby(['year', 'month']).size().reset_index(name='count')
-    day_of_week = df.groupby('day_of_week').size().reset_index(name='count')
-    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    day_of_week['sort'] = day_of_week['day_of_week'].map({d: i for i, d in enumerate(day_order)})
-    day_of_week = day_of_week.sort_values('sort')
-
+    df = current_df()
+    hourly = df.groupby("hour").agg(accidents=("accident_id", "count"),
+                                    fatalities=("fatalities", "sum")).reindex(range(24), fill_value=0)
+    yearly = df.groupby("year").agg(accidents=("accident_id", "count"),
+                                    fatalities=("fatalities", "sum")).reset_index()
+    monthly = (df.groupby("month_name").agg(accidents=("accident_id", "count"),
+                                            fatalities=("fatalities", "sum"))
+               .reindex(MONTH_ORDER, fill_value=0))
+    dow = (df.groupby("day_of_week").agg(accidents=("accident_id", "count"),
+                                         fatalities=("fatalities", "sum"))
+           .reindex(DAY_ORDER, fill_value=0))
     return jsonify({
-        'hourly': hourly.to_dict(orient='records'),
-        'monthly': monthly.to_dict(orient='records'),
-        'day_of_week': day_of_week[['day_of_week', 'count']].to_dict(orient='records'),
+        "hourly": [{"hour": int(h), **row} for h, row in zip(hourly.index, records(hourly))],
+        "yearly": records(yearly),
+        "monthly": [{"month": m, **row} for m, row in zip(monthly.index, records(monthly))],
+        "day_of_week": [{"day": d, **row} for d, row in zip(dow.index, records(dow))],
     })
 
 
-@app.route('/api/charts/speed-stats')
-def charts_speed():
-    df = get_df()
-    by_severity = {}
-    for sev in df['severity'].unique():
-        speeds = df[df['severity'] == sev]['speed_kmh'].dropna().tolist()
-        by_severity[sev] = speeds[:500]  # cap for response size
-
-    by_road = {}
-    for rt in df['road_type'].unique():
-        speeds = df[df['road_type'] == rt]['speed_kmh'].dropna().tolist()
-        by_road[rt] = speeds[:500]
-
+@app.route("/api/charts/city-severity")
+def charts_city_severity():
+    """Top cities by accident count, split by severity (real counts)."""
+    df = current_df()
+    top = df["city"].value_counts().head(10).index.tolist()
+    table = (df[df["city"].isin(top)].groupby(["city", "severity"]).size()
+             .unstack(fill_value=0).reindex(index=top, columns=SEVERITY_ORDER, fill_value=0))
     return jsonify({
-        'all_speeds': df['speed_kmh'].dropna().tolist()[:1000],
-        'by_severity': by_severity,
-        'by_road': by_road,
-        'stats': {
-            'mean': round(float(df['speed_kmh'].mean()), 1) if df['speed_kmh'].notna().any() else None,
-            'median': round(float(df['speed_kmh'].median()), 1) if df['speed_kmh'].notna().any() else None,
-            'std': round(float(df['speed_kmh'].std()), 1) if df['speed_kmh'].notna().any() else None,
-            'min': round(float(df['speed_kmh'].min()), 1) if df['speed_kmh'].notna().any() else None,
-            'max': round(float(df['speed_kmh'].max()), 1) if df['speed_kmh'].notna().any() else None,
-        }
+        "cities": top,
+        "series": {s: table[s].astype(int).tolist() for s in SEVERITY_ORDER},
     })
 
 
-@app.route('/api/charts/casualties')
+@app.route("/api/charts/casualties")
 def charts_casualties():
-    df = get_df()
-    return jsonify({
-        'total_by_city': df.groupby('city').agg(
-            fatalities=('fatalities', 'sum'),
-            injuries=('injuries', 'sum'),
-            accidents=('accident_id', 'count')
-        ).reset_index().to_dict(orient='records'),
-        'by_cause': df.groupby('cause').agg(
-            fatalities=('fatalities', 'sum'),
-            injuries=('injuries', 'sum'),
-            accidents=('accident_id', 'count')
-        ).reset_index().sort_values('fatalities', ascending=False).to_dict(orient='records'),
-        'by_road': df.groupby('road_type').agg(
-            fatalities=('fatalities', 'sum'),
-            injuries=('injuries', 'sum'),
-            accidents=('accident_id', 'count')
-        ).reset_index().to_dict(orient='records'),
-        'monthly_trend': df.groupby(['year', 'month']).agg(
-            fatalities=('fatalities', 'sum'),
-            injuries=('injuries', 'sum'),
-            accidents=('accident_id', 'count')
-        ).reset_index().to_dict(orient='records'),
-        'severity_counts': df['severity'].value_counts().to_dict(),
-    })
+    df = current_df()
+
+    def group(col):
+        out = df.groupby(col).agg(fatalities=("fatalities", "sum"), injuries=("injuries", "sum"),
+                                  accidents=("accident_id", "count")).reset_index()
+        out["fatality_rate"] = (out["fatalities"] / out["accidents"]).round(3)
+        return records(out.sort_values("fatalities", ascending=False))
+
+    return jsonify({"by_cause": group("cause"), "by_road": group("road_type")})
 
 
-@app.route('/api/charts/heatmap')
-def charts_heatmap():
-    df = get_df()
-    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    pivot = df.pivot_table(index='day_of_week', columns='hour', values='accident_id',
-                           aggfunc='count', fill_value=0)
-    pivot = pivot.reindex([d for d in day_order if d in pivot.index])
-
-    result = []
-    for day in pivot.index:
-        for hr in pivot.columns:
-            result.append({'day': day, 'hour': int(hr), 'count': int(pivot.loc[day, hr])})
-
-    return jsonify({'heatmap': result, 'days': day_order, 'hours': list(range(24))})
+@app.route("/api/charts/scatter")
+def charts_scatter():
+    """A reproducible sample of speed vs injuries for the scatter plot."""
+    df = current_df()
+    sample = df.sample(min(1200, len(df)), random_state=7) if len(df) else df
+    return jsonify(records(sample[["speed_kmh", "injuries", "severity", "city", "road_type"]]))
 
 
-# ─── ML Prediction ────────────────────────────────────────────────────────────
+@app.route("/api/analytics/heatmap")
+def heatmap_data():
+    df = current_df()
+    pivot = (df.pivot_table(index="day_of_week", columns="hour", values="accident_id",
+                            aggfunc="count", fill_value=0)
+             .reindex(index=DAY_ORDER, columns=range(24), fill_value=0))
+    return jsonify({"days": DAY_ORDER, "hours": list(range(24)), "z": pivot.values.tolist()})
 
-@app.route('/api/predict', methods=['POST'])
+
+# ─── Static Matplotlib / Seaborn images ───────────────────────────────────────
+
+@lru_cache(maxsize=256)
+def _render_chart(name, city, year, severity):
+    df = apply_filters(get_df(), city, year, severity)
+    return visualizations.CHARTS[name](df)
+
+
+@app.route("/api/viz/<name>.png")
+def viz_png(name):
+    if name not in visualizations.CHARTS:
+        abort(404)
+    try:
+        png = _render_chart(name, *filter_args())
+    except Exception as exc:  # report instead of returning a broken image silently
+        app.logger.exception("Chart %s failed", name)
+        return jsonify({"error": str(exc)}), 500
+    return Response(png, mimetype="image/png", headers={"Cache-Control": "no-cache"})
+
+
+# ─── Machine learning ─────────────────────────────────────────────────────────
+
+_model_bundle = None
+_model_lock = threading.Lock()
+
+
+def _check_model_version():
+    """A pickle is only trusted if it was written by the installed scikit-learn."""
+    import sklearn
+    path = os.path.join(MODELS_PATH, "metrics.json")
+    with open(path, encoding="utf-8") as f:
+        saved = json.load(f).get("sklearn_version")
+    if saved != sklearn.__version__:
+        raise RuntimeError(f"model trained with scikit-learn {saved}, installed {sklearn.__version__}")
+
+
+def get_model():
+    """Load the trained model; retrain automatically if the pickle is missing or
+    was written by a different scikit-learn version."""
+    global _model_bundle
+    if _model_bundle is not None:
+        return _model_bundle
+    with _model_lock:
+        if _model_bundle is not None:
+            return _model_bundle
+        import joblib
+        model_path = os.path.join(MODELS_PATH, "rf_model.pkl")
+        features_path = os.path.join(MODELS_PATH, "features.json")
+        try:
+            _check_model_version()
+            model = joblib.load(model_path)
+            with open(features_path, encoding="utf-8") as f:
+                features = json.load(f)
+        except Exception as exc:
+            app.logger.warning("Saved model unusable (%s); retraining.", exc)
+            import ml_model
+            model, features = ml_model.train_and_save()
+        _model_bundle = (model, features)
+    return _model_bundle
+
+
+@app.route("/api/predict", methods=["POST"])
 def predict():
     try:
-        import joblib
-        data = request.get_json() or {}
-        model = joblib.load(os.path.join(MODELS_PATH, "rf_model.pkl"))
-        with open(os.path.join(MODELS_PATH, "features.json"), encoding="utf-8") as f:
-            features = json.load(f)
-
-        hour = int(data.get('hour', 12))
-        month = int(data.get('month', 6))
-        speed_kmh = float(data.get('speed_kmh', 55.0))
-        vehicles = int(data.get('vehicles_involved', 2))
+        data = request.get_json(silent=True) or {}
+        model, features = get_model()
         row = {
-            'hour': hour,
-            'month': month,
-            'speed_kmh': speed_kmh,
-            'vehicles_involved': vehicles,
-            'road_type': data.get('road_type', 'Urban Road'),
-            'weather_condition': data.get('weather_condition', 'Clear'),
-            'light_condition': data.get('light_condition', 'Daylight'),
-            'cause': data.get('cause', 'Over Speeding'),
-            'vehicle_type': data.get('vehicle_type', 'Car'),
-            'city': data.get('city', 'Delhi'),
+            "hour": int(data.get("hour", 12)),
+            "month": int(data.get("month", 6)),
+            "speed_kmh": float(data.get("speed_kmh", 55)),
+            "vehicles_involved": int(data.get("vehicles_involved", 2)),
+            "road_type": data.get("road_type"),
+            "weather_condition": data.get("weather_condition"),
+            "light_condition": data.get("light_condition"),
+            "cause": data.get("cause"),
+            "vehicle_type": data.get("vehicle_type"),
+            "city": data.get("city"),
         }
         X = pd.DataFrame([{f: row.get(f) for f in features}])
         probs = model.predict_proba(X)[0]
-        labels = model.classes_.tolist()
-        pred = str(model.predict(X)[0])
+        labels = [str(c) for c in model.classes_]
+        best = int(np.argmax(probs))
         return jsonify({
-            'prediction': pred,
-            'confidence': round(float(max(probs)) * 100, 1),
-            'probabilities': {str(labels[i]): round(float(p) * 100, 1) for i, p in enumerate(probs)}
+            "prediction": labels[best],
+            "confidence": round(float(probs[best]) * 100, 1),
+            "probabilities": {l: round(float(p) * 100, 1) for l, p in zip(labels, probs)},
         })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": f"Invalid input: {exc}"}), 400
+    except Exception as exc:
+        app.logger.exception("Prediction failed")
+        return jsonify({"error": str(exc)}), 500
 
 
-
-@app.route('/api/ml-metrics')
+@app.route("/api/ml-metrics")
 def ml_metrics():
-    metrics_file = os.path.join(MODELS_PATH, "metrics.json")
-    if os.path.exists(metrics_file):
-        with open(metrics_file) as f:
-            return jsonify(json.load(f))
-    return jsonify({'error': 'Model not trained yet. Run ml_model.py first.'}), 404
+    path = os.path.join(MODELS_PATH, "metrics.json")
+    if not os.path.exists(path):
+        return jsonify({"error": "Model not trained yet. Run: python ml_model.py"}), 404
+    with open(path, encoding="utf-8") as f:
+        return jsonify(json.load(f))
 
 
-# ─── Filters ──────────────────────────────────────────────────────────────────
+# ─── Visualisation tool comparison (static reference data) ────────────────────
 
-@app.route('/api/filters')
-def filters():
-    df = get_df()
-    cities = sorted(df['city'].dropna().unique().tolist(), key=str.casefold)
-    return jsonify({
-        'cities': cities,
-        'dataset_cities': cities,
-
-        'years': sorted(df['year'].unique().tolist()),
-        'severities': sorted(df['severity'].dropna().unique().tolist()),
-        'road_types': sorted(df['road_type'].unique().tolist()),
-        'weather': sorted(df['weather_condition'].unique().tolist()),
-        'causes': sorted(df['cause'].unique().tolist()),
-        'vehicle_types': sorted(df['vehicle_type'].unique().tolist()),
-        'light_conditions': sorted(df['light_condition'].unique().tolist()),
-        'states': sorted(df['state'].unique().tolist()),
-        'days': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
-    })
+TOOLS = [
+    {"tool": "Seaborn", "usability": 9, "flexibility": 7, "visual_appeal": 8, "interactivity": 2,
+     "best_for": "Statistical plots and quick exploratory analysis"},
+    {"tool": "Matplotlib", "usability": 7, "flexibility": 10, "visual_appeal": 6, "interactivity": 2,
+     "best_for": "Full control and publication-ready figures"},
+    {"tool": "Plotly", "usability": 9, "flexibility": 9, "visual_appeal": 10, "interactivity": 10,
+     "best_for": "Interactive dashboards and web apps"},
+    {"tool": "Excel", "usability": 10, "flexibility": 5, "visual_appeal": 7, "interactivity": 4,
+     "best_for": "Non-technical users and quick reports"},
+]
 
 
-# ─── Analytics ────────────────────────────────────────────────────────────────
-
-@app.route('/api/analytics/hotspots')
-def hotspots():
-    df = get_df()
-    city_stats = df.groupby('city').agg(
-        total=('accident_id', 'count'),
-        fatalities=('fatalities', 'sum'),
-        injuries=('injuries', 'sum'),
-        avg_speed=('speed_kmh', 'mean'),
-        fatal_count=('severity', lambda x: (x == 'Fatal').sum()),
-    ).reset_index()
-    city_stats['risk_score'] = (
-        city_stats['fatalities'] * 10 +
-        city_stats['injuries'] * 2 +
-        city_stats['total'] * 0.5
-    ).round(1)
-    city_stats = city_stats.sort_values('risk_score', ascending=False)
-    city_stats['avg_speed'] = city_stats['avg_speed'].round(1).where(city_stats['avg_speed'].notna(), None)
-    return jsonify(city_stats.to_dict(orient='records'))
-
-
-@app.route('/api/analytics/risk-periods')
-def risk_periods():
-    df = get_df()
-    # By hour
-    hourly = df.groupby('hour').agg(
-        accidents=('accident_id', 'count'),
-        fatalities=('fatalities', 'sum'),
-        avg_severity_score=('severity_score', 'mean')
-    ).reset_index()
-
-    # By month
-    monthly = df.groupby('month_name').agg(
-        accidents=('accident_id', 'count'),
-        fatalities=('fatalities', 'sum')
-    ).reset_index()
-
-    month_order = ['January', 'February', 'March', 'April', 'May', 'June',
-                   'July', 'August', 'September', 'October', 'November', 'December']
-    monthly['sort'] = monthly['month_name'].map({m: i for i, m in enumerate(month_order)})
-    monthly = monthly.sort_values('sort')
-
-    return jsonify({
-        'hourly': hourly.to_dict(orient='records'),
-        'monthly': monthly[['month_name', 'accidents', 'fatalities']].to_dict(orient='records'),
-    })
-
-
-@app.route('/api/analytics/comparison')
+@app.route("/api/analytics/comparison")
 def tool_comparison():
-    """Comparison data for visualization tools."""
-    return jsonify({
-        'tools': [
-            {
-                'tool': 'Seaborn',
-                'usability': 9, 'flexibility': 7, 'visual_appeal': 8,
-                'interactivity': 2, 'learning_curve': 8,
-                'best_for': 'Statistical plots, quick analysis',
-                'chart_types': 'Histogram, Box, Violin, Heatmap, Pair plots'
-            },
-            {
-                'tool': 'Matplotlib',
-                'usability': 7, 'flexibility': 10, 'visual_appeal': 6,
-                'interactivity': 2, 'learning_curve': 6,
-                'best_for': 'Full control, publication-ready figures',
-                'chart_types': 'All types: bar, pie, scatter, histogram'
-            },
-            {
-                'tool': 'Plotly',
-                'usability': 9, 'flexibility': 9, 'visual_appeal': 10,
-                'interactivity': 10, 'learning_curve': 8,
-                'best_for': 'Interactive dashboards, web apps',
-                'chart_types': 'All types + 3D, animated, geo maps'
-            },
-            {
-                'tool': 'Excel',
-                'usability': 10, 'flexibility': 5, 'visual_appeal': 7,
-                'interactivity': 4, 'learning_curve': 10,
-                'best_for': 'Non-technical users, quick reports',
-                'chart_types': 'Bar, pie, line, scatter (limited)'
-            },
-        ]
-    })
+    return jsonify({"tools": TOOLS})
 
 
-if __name__ == '__main__':
-    print("Starting SafeRoute Analytics server...")
-    print("Ensuring data is available...")
-    df = get_df()
-    print(f"Loaded {len(df)} accident records.")
-    app.run(debug=True, port=5050, host='0.0.0.0')
+if __name__ == "__main__":
+    print(f"Loaded {len(get_df()):,} accident records.")
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "5050"))
+    app.run(host=host, port=port, debug=os.environ.get("FLASK_DEBUG") == "1")

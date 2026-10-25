@@ -3,7 +3,15 @@
   "training_rows": 7284,
   "test_rows": 1822,
   "accuracy": 0.7574,
+  "balanced_accuracy": 0.257,
   "macro_f1": 0.2342,
+  "majority_baseline": 0.7618,
+  "class_share": {
+    "Fatal": 0.7619,
+    "Serious": 0.1394,
+    "Minor": 0.0863,
+    "Property Damage Only": 0.0124
+  },
   "classification_report": {
     "Fatal": {
       "precision": 0.7637883008356546,
@@ -81,11 +89,11 @@
       "importance": 0.221
     },
     {
-      "feature": "speed",
+      "feature": "speed_kmh",
       "importance": 0.1248
     },
     {
-      "feature": "vehicle",
+      "feature": "vehicle_type",
       "importance": 0.1148
     },
     {
@@ -101,19 +109,19 @@
       "importance": 0.0881
     },
     {
-      "feature": "weather",
+      "feature": "weather_condition",
       "importance": 0.0874
     },
     {
-      "feature": "road",
+      "feature": "road_type",
       "importance": 0.0821
     },
     {
-      "feature": "light",
+      "feature": "light_condition",
       "importance": 0.0529
     },
     {
-      "feature": "vehicles",
+      "feature": "vehicles_involved",
       "importance": 0.0445
     }
   ],
@@ -129,5 +137,5 @@
     "vehicle_type",
     "city"
   ],
-  "source": "Real Indian Road Accident Records (MoRTH / City Police Data)"
+  "sklearn_version": "1.5.1"
 }

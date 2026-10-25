@@ -1,94 +1,65 @@
-# SafeRoute Analytics — Indian Road Accidents Dataset Edition
+# SafeRoute Analytics
 
-A Flask data analytics and machine learning platform for exploring real Indian road accidents, geospatial hotspot clusters, temporal patterns, and severity classification.
+A Flask dashboard for exploring Indian road accident records: hotspot maps, statistical charts, risk analysis and a Random Forest severity predictor.
 
----
+## Quick start
 
-## Dataset Information
-
-- **Records**: 9,106 accident incident records
-- **Geographic Coverage**: 88 Indian cities across 35 States & Union Territories (Delhi, Mumbai, Bengaluru, Chennai, Hyderabad, Kolkata, Patna, Bhopal, Chandigarh, Jaipur, Lucknow, Ahmedabad, Pune, and more)
-- **Time Period**: 2010–2024
-- **Source**: Ministry of Road Transport and Highways (MoRTH) & City Traffic Police accident reports
-- **Key Columns**:
-  - `accident_id`: Unique identifier
-  - `date`, `year`, `month`, `month_name`, `day_of_week`, `hour`: Temporal parameters
-  - `city`, `state`, `latitude`, `longitude`: Geospatial location with verified Indian coordinates
-  - `road_type`: Urban Road, National Highway, State Highway, Expressway, Rural Road
-  - `weather_condition`: Clear, Rainy, Foggy, Cloudy, Stormy
-  - `light_condition`: Daylight, Night - Street Lights, Night - No Street Lights
-  - `cause`: Over Speeding, Drunk Driving, Distracted Driving, Brake Failure, Weather
-  - `vehicle_type`: Car, Bike, Truck, Auto Rickshaw, Bus, Tractor, Bicycle
-  - `speed_kmh`: Speed records mapped to road category
-  - `fatalities`, `injuries`, `casualty_count`: Recorded casualty numbers
-  - `severity`: Fatal, Serious, Minor, Property Damage Only
-
----
-
-## User Interface & Design
-
-- **Theme**: Clean, bright, light natural design
-- **Colors**: Sage green (`#39785B`), olive, warm terracotta (`#C96D4B`), sand yellow (`#D49A42`), and teal slate
-- **Clean Aesthetics**: Minimalist icons and clear typography with no excessive emojis
-- **Map**: Centered over India (`[22.5, 78.9]`), featuring Heatmap, Clusters, and Point Markers with interactive tooltips
-
----
-
-## Quick Start (VS Code / Windows)
-
-1. Open the project folder in **VS Code**.
-2. Open terminal (`Ctrl + \``) and run:
-
-```powershell
+```bash
 python -m venv venv
-.\venv\Scripts\activate
+# Windows: venv\Scripts\activate      macOS/Linux: source venv/bin/activate
 pip install -r requirements.txt
-python data_loader_india.py   # Prepares the real Indian dataset (9,106 records)
-python ml_model.py            # Trains the Random Forest severity model
-python app.py                 # Launches the Flask server
+python ml_model.py      # optional: the app retrains automatically if the model is missing
+python app.py
 ```
 
-3. Open your browser at **http://localhost:5050**.
+Open http://localhost:5050. On Windows you can run `setup.bat` once, then `start.bat`.
+Set `PORT`, `HOST` or `FLASK_DEBUG=1` as environment variables if needed (default host is 127.0.0.1).
 
----
+## Pages
 
-## Machine Learning Model
+| Page | Contents |
+|---|---|
+| Dashboard | KPIs, yearly trend, severity split, top cities, accidents by hour |
+| Hotspot Map | Heatmap, clusters and points on a map of India, plus a risk-ranked city table |
+| Charts | Seaborn and Matplotlib images drawn by the backend, plus interactive Plotly charts |
+| Risk Analysis | Hour, weekday and month patterns; fatalities per accident by road type and cause |
+| Predictor | Severity prediction, model metrics, feature importance, confusion matrix |
+| Tools | Comparison of Seaborn, Matplotlib, Plotly and Excel |
 
-- **Algorithm**: Random Forest Classifier (`n_estimators=150`, balanced class weighting)
-- **Features Used**: Hour, Month, Speed (km/h), Vehicles Involved, Road Type, Weather, Lighting Condition, Accident Cause, Vehicle Type, City
-- **Target**: Severity Classification (`Fatal`, `Serious`, `Minor`, `Property Damage Only`)
-- **Evaluation**: 80/20 train/test split with Accuracy, Macro-F1, and Confusion Matrix stored in `models/metrics.json`
+City, year and severity filters apply to every data page. The map needs internet access for basemap tiles; all JavaScript libraries are bundled in `frontend/vendor`.
 
----
+## API
 
-## Project Structure
+All data endpoints accept `?city=&year=&severity=`.
+
+`/api/filters` `/api/kpis` `/api/map-data` `/api/analytics/hotspots` `/api/analytics/heatmap` `/api/analytics/comparison`
+`/api/charts/summary` `/api/charts/temporal` `/api/charts/city-severity` `/api/charts/casualties` `/api/charts/scatter`
+`/api/viz/<name>.png` (speed_hist, injuries_hist, box_severity, box_road, cause_bar, severity_pie, heatmap)
+`POST /api/predict` `/api/ml-metrics` `/api/health`
+
+## Data notes
+
+`data/accidents.csv` is built by `data_loader_india.py` from a public Indian road accident dataset (9,106 records, 88 cities, 2010-2024). Some fields are generated rather than measured:
+
+- `hour` is inferred from the lighting condition
+- `speed_kmh` is sampled from a distribution per road type
+- `vehicles_involved` is random
+- coordinates are city centres with a small random spread
+
+Charts based on these fields show modelled values.
+
+## Model
+
+Random Forest (150 trees, balanced class weights) on hour, month, speed, vehicles, road, weather, lighting, cause, vehicle type and city, with an 80/20 split.
+Results (in `models/metrics.json`): accuracy 75.7%, balanced accuracy 25.7%, macro-F1 0.23. About 76% of records are "Fatal", so accuracy is close to an always-"Fatal" baseline (76.2%), and balanced accuracy is chance level for four classes. These inputs do not separate severities well; treat predictions as illustrative.
+
+## Structure
 
 ```
-saferoute-analytics/
-├── app.py                  # Flask backend API (13 endpoints)
-├── data_loader_india.py    # Real Indian dataset processor
-├── ml_model.py             # Random Forest pipeline & metrics
-├── visualizations.py       # Seaborn, Matplotlib, and Plotly engine
-├── requirements.txt        # Dependencies
-├── data/
-│   ├── accidents.csv       # Processed real Indian dataset (9,106 records)
-│   └── accidents.xlsx      # Excel export
-├── models/
-│   ├── rf_model.pkl        # Trained model
-│   ├── features.json       # Feature configuration
-│   └── metrics.json        # Accuracy and confusion matrix
-└── frontend/
-    ├── index.html          # Clean dashboard SPA (6 pages)
-    ├── style.css           # Bright natural theme stylesheet
-    └── app.js              # Plotly, Leaflet map, Chart.js logic
+app.py                 Flask API and static hosting
+data_loader_india.py   Builds data/accidents.csv
+ml_model.py            Trains and saves the model and metrics
+visualizations.py      Matplotlib / Seaborn chart renderer
+frontend/              index.html, style.css, app.js, vendor/ (Plotly, Leaflet)
+SafeRoute_Maps_No_API_Key.ipynb   Folium maps notebook
 ```
-
-
-## Jupyter Notebook: API-key-free maps
-
-Open `SafeRoute_Maps_No_API_Key.ipynb` in Jupyter Notebook or JupyterLab from the project root. It creates and displays the accident heatmap, marker clusters, and individual accident points using Folium and OpenStreetMap tiles; no map API key is required. An internet connection is needed for the basemap tiles. Install dependencies with `pip install pandas folium`.
-
-
-### Hotspot map canvas fix
-
-The Heatmap view now uses Leaflet vector density circles instead of the `leaflet.heat` canvas plugin. This avoids the `getImageData` / `source height is 0` exception when the dashboard map is first shown or resized. Heatmap, Clusters, and Points require no map API key. OpenStreetMap/CARTO tiles still require an internet connection.

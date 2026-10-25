@@ -1,23 +1,18 @@
 @echo off
 echo ======================================
-echo  SafeRoute Analytics — Setup Script
+echo  SafeRoute Analytics - Setup
 echo ======================================
-echo.
-echo [1/4] Creating virtual environment...
-python -m venv venv
-
-echo [2/4] Activating virtual environment...
+where python >nul 2>nul || (echo Python was not found. Install Python 3.10+ from python.org & pause & exit /b 1)
+if not exist venv (
+  echo [1/3] Creating virtual environment...
+  python -m venv venv || (echo Could not create venv & pause & exit /b 1)
+)
 call venv\Scripts\activate.bat
-
-echo [3/4] Installing dependencies...
-pip install -r requirements.txt
-
-echo [4/4] Training ML model on the included real dataset...
-python ml_model.py
-
+echo [2/3] Installing dependencies...
+python -m pip install --upgrade pip >nul
+pip install -r requirements.txt || (echo Dependency install failed & pause & exit /b 1)
+echo [3/3] Training the severity model...
+python ml_model.py || (echo Model training failed & pause & exit /b 1)
 echo.
-echo ======================================
-echo  Setup Complete!
-echo  Run: start.bat to launch the server
-echo ======================================
+echo Setup complete. Run start.bat to launch the app.
 pause
